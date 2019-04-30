@@ -3,3 +3,4 @@ test/
 patches/
 .gdb_history
 .tramp_history
+/compile_commands.json

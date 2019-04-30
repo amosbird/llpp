@@ -212,6 +212,8 @@ class type lvsource =
                   first:int ->
                   pan:int ->
                   uioh option
+    method hasaction2 : int -> bool
+    method exit2 : cancel:bool -> active:int -> uioh option
     method getactive : int
     method getfirst : int
     method getpan : int
@@ -227,6 +229,8 @@ class virtual lvsourcebase =
           method getfirst = m_first
           method getpan = m_pan
           method getminfo : (int * int) array = E.a
+          method hasaction2 (_ : int) = false
+          method exit2 ~cancel:(_ : bool) ~active:(_ : int) : uioh option = None
         end;;
 
 let coe s = (s :> uioh);;
@@ -569,6 +573,37 @@ object (self)
            set1 active first qsearch
        );
 
+    | Ascii 'k' when Wsi.withctrl mask -> navigate ~-1
+    | Ascii 'j' when Wsi.withctrl mask -> navigate 1
+
+    | Ascii ('c' .. 'e' as c) when Wsi.withctrl mask ->
+        let n = int_of_char c - 99 in
+        let opt =
+          if source#hasaction2 n
+          then
+            (
+              postRedisplay "listview click";
+              source#exit2 ~cancel:false ~active:n
+            )
+          else
+            Some (coe self)
+        in
+        getoptdef m_prev_uioh opt
+
+    | Ascii ('1'..'9' as c) when Wsi.withalt mask ->
+        let n = int_of_char c - 49 in
+        let opt =
+          if source#hasaction2 n
+          then
+            (
+              postRedisplay "listview click";
+              source#exit2 ~cancel:false ~active:n
+            )
+          else
+            Some (coe self)
+        in
+        getoptdef m_prev_uioh opt
+
     | Ascii _ | Code _ ->
        let utf8 =
          match [@warning "-8"] kt with
@@ -684,6 +719,10 @@ object (self)
          | _ ->
             Some (coe self)
          end
+      | 3 when down ->
+         postRedisplay "listview escape";
+         source#exit ~uioh:(coe self) ~cancel:true ~active:m_active
+                     ~first:m_first ~pan:m_pan
       | n when (n == 4 || n == 5) && not down ->
          let len = source#getitemcount in
          let first =

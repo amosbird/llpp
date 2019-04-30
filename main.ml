@@ -1982,7 +1982,7 @@ let genhistoutlines () =
 ;;
 
 let gotohist (path, c, bookmarks, x, anchor, origin) =
-  Config.save leavebirdseye;
+  (* Config.save leavebirdseye; *)
   state.anchor <- anchor;
   state.bookmarks <- bookmarks;
   state.origin <- origin;
@@ -2840,6 +2840,16 @@ let enterannotmode opaque slinkindex =
          );
          None
 
+       method! hasaction2 n = n < Array.length m_items && nonemptystr @@ fst m_items.(Array.length m_items - n - 1)
+
+       method! exit2 ~cancel ~active =
+         if not cancel
+         then (
+           let _label, func = m_items.(Array.length m_items - active - 1) in
+           func ()
+         );
+         None
+
        method hasaction n = nonemptystr @@ fst m_items.(n)
 
        method reset s =
@@ -2869,7 +2879,7 @@ let enterannotmode opaque slinkindex =
            delannot opaque slinkindex;
            cleanup ();
          in
-         let edit inline () =
+         let edit _ () =
            let update s =
              if emptystr s
              then dele ()
@@ -2878,7 +2888,7 @@ let enterannotmode opaque slinkindex =
                cleanup ();
              )
            in
-           if inline
+           if false
            then
              let mode = state.mode in
              state.mode <-
@@ -2970,8 +2980,11 @@ let gotoremote spec =
 
 let gotounder = function
   | Ulinkuri s when isexternallink s ->
-     if substratis s 0 "file://"
-     then gotoremote @@ String.sub s 7 (String.length s - 7)
+     if substratis s 0 "file://" && s.[7] <> '/'
+     then (
+       let path = Filename.concat "file://" @@ Filename.dirname state.path in
+       Help.gotouri conf.urilauncher @@ Filename.concat path @@ String.sub s 7 (String.length s - 7)
+     )
      else Help.gotouri conf.urilauncher s
   | Ulinkuri s ->
      let pageno, x, y = uritolocation s in
@@ -3334,6 +3347,7 @@ let viewkeyboard key mask =
     postRedisplay "view:enttext"
   in
   let ctrl = Wsi.withctrl mask in
+  let alt = Wsi.withalt mask in
   let open Keys in
   match Wsi.kc2kt key with
   | Ascii 'S' -> state.slideshow <- state.slideshow lxor 1
@@ -3396,7 +3410,7 @@ let viewkeyboard key mask =
      )
      else impmsg "keyboard link navigation does not work under rotation"
 
-  | Escape | Ascii 'q' ->
+  | Ascii 'I' | Ascii 'q' ->
      begin match state.mstate with
      | Mzoomrect _ ->
         resetmstate ();
@@ -3430,10 +3444,10 @@ let viewkeyboard key mask =
      addnavnorc ();
      gotoxy state.x (getnav ~-1)
 
-  | Ascii 'o' -> enteroutlinemode ()
+  | Ascii 'o' when not ctrl -> enteroutlinemode ()
   | Ascii 'H' -> enterhistmode ()
 
-  | Ascii 'u' ->
+  | Escape ->
      state.rects <- [];
      state.text <- E.s;
      Hashtbl.iter (fun _ opaque ->
@@ -3485,36 +3499,26 @@ let viewkeyboard key mask =
      then gotoxy 0 state.y
      else setzoom 1.0
 
-  | Ascii ('1'|'2' as c) when ctrl && conf.fitmodel != FitPage ->
-     let cols =
+  | Ascii 'a' ->
+     state.text <- "fit model: " ^ FMTE.to_string FitPage;
+     reqlayout conf.angle FitPage;
+     setzoom 1.0
+
+  | Ascii 'w' ->
+     state.text <- "fit model: " ^ FMTE.to_string FitWidth;
+     reqlayout conf.angle FitWidth;
+     setzoom 1.0
+
+  | Ascii '1' when ctrl ->
+     conf.beyecolumns <- (
        match conf.columns with
-       | Csingle _ | Cmulti _ -> 1
-       | Csplit (n, _) -> n
-     in
-     let h = state.winh -
-               conf.interpagespace lsl (if conf.presentation then 1 else 0)
-     in
-     let zoom = zoomforh state.winw h 0 cols in
-     if zoom > 0.0 && (c = '2' || zoom < 1.0)
-     then setzoom zoom
+       | Cmulti ((c, _, _), _) -> Some c
+       | Csingle _ -> None
+       | Csplit _ -> error "leaving bird's eye split mode"
+     );
+     togglebirdseye ()
 
-  | Ascii '3' when ctrl ->
-     let fm =
-       match conf.fitmodel with
-       | FitWidth -> FitProportional
-       | FitProportional -> FitPage
-       | FitPage -> FitWidth
-     in
-     state.text <- "fit model: " ^ FMTE.to_string fm;
-     reqlayout conf.angle fm
-
-  | Ascii '4' when ctrl ->
-     let zoom = getmaxw () /. float state.winw in
-     if zoom > 0.0 then setzoom zoom
-
-  | Fn 9 | Ascii '9' when ctrl -> togglebirdseye ()
-
-  | Ascii ('0'..'9' as c) when not ctrl ->
+  | Ascii ('0'..'9' as c) when not ctrl && not alt ->
      let ondone s =
        let n =
          try int_of_string s with exn ->
@@ -3536,9 +3540,9 @@ let viewkeyboard key mask =
      enttext (":", text, Some (onhist state.hists.pag),
               pageentry, ondone, true)
 
-  | Ascii 'b' ->
-     conf.scrollb <- if conf.scrollb = 0 then (scrollbvv lor scrollbhv) else 0;
-     postRedisplay "toggle scrollbar";
+  (* | Ascii 'b' ->
+   *    conf.scrollb <- if conf.scrollb = 0 then (scrollbvv lor scrollbhv) else 0;
+   *    postRedisplay "toggle scrollbar"; *)
 
   | Ascii 'B' ->
      state.bzoom <- not state.bzoom;
@@ -3567,7 +3571,7 @@ let viewkeyboard key mask =
      )
      else impmsg "hint mode does not work under rotation"
 
-  | Ascii 'y' ->
+  | Ascii 'Y' ->
      state.glinks <- true;
      let mode = state.mode in
      state.mode <-
@@ -3582,7 +3586,7 @@ let viewkeyboard key mask =
      state.text <- E.s;
      postRedisplay "view:linkent"
 
-  | Ascii 'a' ->
+  | Ascii 'A' ->
      begin match state.autoscroll with
      | Some step ->
         conf.autoscrollstep <- step;
@@ -3592,7 +3596,7 @@ let viewkeyboard key mask =
         state.slideshow <- state.slideshow land lnot 2
      end
 
-  | Ascii 'p' when ctrl ->
+  | Ascii 'y' ->
      launchpath ()              (* XXX where do error messages go? *)
 
   | Ascii 'P' ->
@@ -3600,7 +3604,7 @@ let viewkeyboard key mask =
      showtext ' ' ("presentation mode " ^
                      if conf.presentation then "on" else "off");
 
-  | Ascii 'f' ->
+  | Fn 11 ->
      if List.mem Wsi.Fullscreen state.winstate
      then Wsi.reshape conf.cwinw conf.cwinh
      else Wsi.fullscreen ()
@@ -3614,21 +3618,21 @@ let viewkeyboard key mask =
      | l :: _ -> gotoxy state.x (getpagey l.pageno)
      end
 
-  | Ascii ' ' -> nextpage ()
-  | Delete -> prevpage ()
+  | Ascii ('f'|' ') -> nextpage ()
+  | Ascii 'b' | Delete -> prevpage ()
   | Ascii '=' -> showtext ' ' (describe_layout state.layout);
 
-  | Ascii 'w' ->
-     begin match state.layout with
-     | [] -> ()
-     | l :: _ ->
-        Wsi.reshape l.pagew l.pageh;
-        postRedisplay "w"
-     end
+  (* | Ascii 'w' ->
+   *    begin match state.layout with
+   *    | [] -> ()
+   *    | l :: _ ->
+   *       Wsi.reshape l.pagew l.pageh;
+   *       postRedisplay "w"
+   *    end *)
 
   | Ascii '\'' -> enterbookmarkmode ()
   | Ascii 'h' | Fn 1 -> enterhelpmode ()
-  | Ascii 'i' -> enterinfomode ()
+  | Ascii 'i' when not ctrl -> enterinfomode ()
   | Ascii 'e' when Buffer.length state.errmsgs > 0 -> entermsgsmode ()
 
   | Ascii 'm' ->
@@ -3678,12 +3682,43 @@ let viewkeyboard key mask =
        setcolumns View c a b;
        setzoom z
 
+  | Ascii ('1'..'9' as c) when alt ->
+     let n, a, b = multicolumns_of_string @@ Printf.sprintf "%c" c in
+     setcolumns View n a b
+
+  | Ascii ('2'..'9' as c) when ctrl ->
+     let n, a, b = multicolumns_of_string @@ Printf.sprintf "%c" c in
+     enterbirdseye ();
+     setcolumns View n a b
+
   | Down | Up when ctrl && Wsi.withshift mask ->
      let zoom, x = state.prevzoom in
      setzoom zoom;
      state.x <- x;
 
-  | Up ->
+  | Ascii 'u' ->
+     begin match state.autoscroll with
+     | None ->
+        begin match state.mode with
+        | Birdseye beye -> upbirdseye 1 beye
+        | Textentry _ | View | LinkNav _ ->
+           gotoxy state.x (clamp ~-(state.winh/2))
+        end
+     | Some n -> setautoscrollspeed n false
+     end
+
+  | Ascii 'd' ->
+     begin match state.autoscroll with
+     | None ->
+        begin match state.mode with
+        | Birdseye beye -> downbirdseye 1 beye
+        | Textentry _ | View | LinkNav _ ->
+           gotoxy state.x (clamp (state.winh/2))
+        end
+     | Some n -> setautoscrollspeed n true
+     end
+
+  | Ascii 'k' | Up ->
      begin match state.autoscroll with
      | None ->
         begin match state.mode with
@@ -3700,7 +3735,7 @@ let viewkeyboard key mask =
      | Some n -> setautoscrollspeed n false
      end
 
-  | Down ->
+  | Ascii 'j' | Down ->
      begin match state.autoscroll with
      | None ->
         begin match state.mode with
@@ -3764,10 +3799,16 @@ let viewkeyboard key mask =
      addnav ();
      gotoxy 0 (clamp state.maxy)
 
-  | Right when Wsi.withalt mask ->
+  | Ascii 'i' when ctrl ->
      addnavnorc ();
      gotoxy state.x (getnav 1)
-  | Left when Wsi.withalt mask ->
+  | Right when alt ->
+     addnavnorc ();
+     gotoxy state.x (getnav 1)
+  | Ascii 'o' when ctrl ->
+     addnavnorc ();
+     gotoxy state.x (getnav ~-1)
+  | Left when alt ->
      addnavnorc ();
      gotoxy state.x (getnav ~-1)
 
@@ -4235,17 +4276,21 @@ let zoomrect x y x1 y1 =
   resetmstate ();
 ;;
 
-let annot inline x y =
+let annot _ x y =
   match unproject x y with
   | Some (opaque, n, ux, uy) ->
      let add text =
-       addannot opaque ux uy text;
-       wcmd "freepage %s" (~> opaque);
-       Hashtbl.remove state.pagemap (n, state.gen);
-       flushtiles ();
-       gotoxy state.x state.y
+       if text <> ""
+       then
+         (
+           addannot opaque ux uy text;
+           wcmd "freepage %s" (~> opaque);
+           Hashtbl.remove state.pagemap (n, state.gen);
+           flushtiles ();
+           gotoxy state.x state.y
+         )
      in
-     if inline
+     if false
      then
        let ondone s = add s in
        let mode = state.mode in
@@ -4400,6 +4445,13 @@ let viewmouse button down x y mask =
      )
      else state.mstate <- Mnone
 
+  | 2 ->
+     if down
+     then (
+       annot conf.annotinline x y;
+       postRedisplay "addannot"
+     )
+
   | 3 ->
      if down
      then (
@@ -4518,7 +4570,10 @@ let birdseyemouse button down x y mask
           if y > l.pagedispy && y < l.pagedispy + l.pagevh
              && x > l.pagedispx && x < l.pagedispx + l.pagevw
           then
-            leavebirdseye (conf, leftx, l.pageno, hooverpageno, anchor) false
+            (
+              leavebirdseye (conf, leftx, l.pageno, hooverpageno, anchor) false;
+              setcolumns View 1 0 0
+            )
           else loop rest
      in
      loop state.layout
@@ -4879,6 +4934,7 @@ let () =
         ("-no-title", Arg.Set ignoredoctitlte, " ignore document title");
         ("-layout-height", Arg.Set_int layouth,
          "<height> layout height html/epub/etc (-1, 0, N)");
+        ("--", Arg.Rest (fun s -> state.path <- s), "");
        ]
     )
     (fun s -> state.path <- s)
@@ -4897,7 +4953,7 @@ let () =
   fillhelp ();
   if !gcconfig
   then (
-    Config.gc ();
+    (* Config.gc (); *)
     exit 0
   );
 
@@ -5176,7 +5232,7 @@ let () =
   in
   match loop infinity with
   | exception Quit ->
-     Config.save leavebirdseye;
+     (* Config.save leavebirdseye; *)
      if hasunsavedchanges ()
      then save ()
   | _ -> error "umpossible - infinity reached"

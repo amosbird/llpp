@@ -1380,213 +1380,213 @@ let keystostrlist c =
   loop [] c.keyhashes
 ;;
 
-let save1 bb leavebirdseye x h dc =
-  let uifontsize = fstate.fontsize in
-  let dc = if conf.bedefault then conf else dc in
-  Buffer.add_string bb "<llppconfig>\n";
-
-  if nonemptystr !fontpath
-  then Printf.bprintf bb "<ui-font size='%d'><![CDATA[%s]]></ui-font>\n"
-         uifontsize
-         !fontpath
-  else
-    if uifontsize <> 14
-    then Printf.bprintf bb "<ui-font size='%d'/>\n" uifontsize
-  ;
-
-  Buffer.add_string bb "<defaults";
-  add_attrs bb true dc dc nan;
-  let kb = keymapsbuf true dc dc in
-  if Buffer.length kb > 0
-  then (
-    Buffer.add_string bb ">\n";
-    Buffer.add_buffer bb kb;
-    Buffer.add_string bb "\n</defaults>\n";
-  )
-  else Buffer.add_string bb "/>\n";
-
-  let adddoc path pan anchor c bookmarks time origin =
-    if not (bookmarks == [] && c = dc && anchor = emptyanchor)
-    then (
-      Printf.bprintf bb "<doc path='%s'"
-        (Parser.enent path 0 (String.length path));
-
-      if nonemptystr c.key
-      then Printf.bprintf bb "\n    key='%s'" c.key;
-
-      if nonemptystr origin
-      then Printf.bprintf bb "\n    origin='%s'"
-             (Parser.enent origin 0 (String.length origin));
-
-      if anchor <> emptyanchor
-      then (
-        let n, rely, visy = anchor in
-        Printf.bprintf bb "\n    page='%d'" n;
-
-        if rely > 1e-6
-        then Printf.bprintf bb " rely='%f'" rely;
-
-        if abs_float visy > 1e-6
-        then Printf.bprintf bb " visy='%f'" visy;
-      );
-
-      if pan != 0
-      then Printf.bprintf bb " pan='%d'" pan;
-
-      add_attrs bb false dc c time;
-      if nonemptystr c.css
-      then Printf.bprintf bb ">\n    <css><![CDATA[%s]]></css>" c.css;
-      let kb = keymapsbuf false dc c in
-
-      begin match bookmarks with
-      | [] ->
-         if Buffer.length kb > 0
-         then (
-           Buffer.add_string bb ">\n";
-           Buffer.add_buffer bb kb;
-           Buffer.add_string bb "\n</doc>\n";
-         )
-         else (
-           if nonemptystr c.css
-           then Buffer.add_string bb "\n</doc>\n"
-           else Buffer.add_string bb "/>\n"
-         )
-      | _ ->
-         Buffer.add_string bb ">\n<bookmarks>\n";
-         List.iter (fun (title, _, kind) ->
-             begin match kind with
-             | Oanchor (page, rely, visy) ->
-                Printf.bprintf bb
-                  "<item title='%s' page='%d'"
-                  (Parser.enent title 0 (String.length title))
-                  page;
-                if rely > 1e-6
-                then Printf.bprintf bb " rely='%f'" rely;
-                if abs_float visy > 1e-6
-                then Printf.bprintf bb " visy='%f'" visy;
-
-             | Ohistory _ | Onone | Ouri _ | Oremote _
-             | Oremotedest _ | Olaunch _ -> error "unexpected link in bookmarks"
-             end;
-             Buffer.add_string bb "/>\n";
-           ) bookmarks;
-         Buffer.add_string bb "</bookmarks>";
-         if Buffer.length kb > 0
-         then (
-           Buffer.add_string bb "\n";
-           Buffer.add_buffer bb kb;
-         );
-         Buffer.add_string bb "\n</doc>\n";
-      end;
-    )
-  in
-
-  let pan, conf =
-    match state.mode with
-    | Birdseye (c, pan, _, _, _) ->
-       let beyecolumns =
-         match conf.columns with
-         | Cmulti ((c, _, _), _) -> Some c
-         | Csingle _ -> None
-         | Csplit _ -> None
-       and columns =
-         match c.columns with
-         | Cmulti (c, _) -> Cmulti (c, E.a)
-         | Csingle _ -> Csingle E.a
-         | Csplit _ -> failwith "quit from bird's eye while split"
-       in
-       pan, { c with beyecolumns = beyecolumns; columns = columns }
-    | Textentry _
-    | View
-    | LinkNav _ -> x, conf
-  in
-  let docpath = if nonemptystr state.path then abspath state.path else E.s in
-  if nonemptystr docpath
-  then (
-    adddoc docpath pan (getanchor ())
-      (
-        let autoscrollstep =
-          match state.autoscroll with
-          | Some step -> step
-          | None -> conf.autoscrollstep
-        in
-        begin match state.mode with
-        | Birdseye beye -> leavebirdseye beye true
-        | Textentry _
-        | View
-        | LinkNav _ -> ()
-        end;
-        let key = try Digest.file docpath |> Digest.to_hex
-                  with _ -> E.s in
-        { conf with autoscrollstep; key }
-      )
-      state.bookmarks
-      (now ())
-      state.origin
-  );
-  Hashtbl.iter (fun path (c, bookmarks, x, anchor, origin) ->
-      if docpath <> abspath path
-      then adddoc path x anchor c bookmarks c.lastvisit origin
-    ) h;
-  Buffer.add_string bb "</llppconfig>\n";
-  true;
-;;
-
-let save leavebirdseye =
-  let relx = float state.x /. float state.winw in
-  let w, h, x =
-    let cx w = truncate (relx *. float w) in
-    List.fold_left
-      (fun (w, h, x) ws ->
-        match ws with
-        | Wsi.Fullscreen -> (conf.cwinw, conf.cwinh, cx conf.cwinw)
-        | Wsi.MaxVert -> (w, conf.cwinh, x)
-        | Wsi.MaxHorz -> (conf.cwinw, h, cx conf.cwinw)
-      )
-      (state.winw, state.winh, state.x) state.winstate
-  in
-  conf.cwinw <- w;
-  conf.cwinh <- h;
-  let bb = Buffer.create 32768 in
-  let save2 (h, dc) = save1 bb leavebirdseye x h dc in
-  if load1 save2 && Buffer.length bb > 0
-  then
-    try
-      let tmp = !confpath ^ ".tmp" in
-      let oc = open_out_bin tmp in
-      Buffer.output_buffer oc bb;
-      close_out oc;
-      Unix.rename tmp !confpath;
-    with exn -> dolog "error saving configuration: %s" @@ exntos exn
-;;
-
-let gc () =
-  let href = ref @@ Hashtbl.create 0 in
-  let cref = ref defconf in
-  let push (h, dc) =
-    let f path v =
-      if Sys.file_exists path
-      then Some v
-      else (dolog "removing entry for '%s'" path; None) in
-    Hashtbl.filter_map_inplace f h;
-    href := h;
-    cref := dc;
-    true
-  in
-  ignore (load1 push);
-  let bb = Buffer.create 32768 in
-  let save2 (_h, dc) = save1 bb (fun _ _ -> ()) 0 !href dc in
-  if load1 save2 && Buffer.length bb > 0
-  then (
-    try
-      let tmp = !confpath ^ ".tmp" in
-      let oc = open_out_bin tmp in
-      Buffer.output_buffer oc bb;
-      close_out oc;
-      Unix.rename tmp !confpath;
-    with exn -> dolog "error saving configuration: %s" @@ exntos exn
-  );
-;;
+(* let save1 bb leavebirdseye x h dc =
+ *   let uifontsize = fstate.fontsize in
+ *   let dc = if conf.bedefault then conf else dc in
+ *   Buffer.add_string bb "<llppconfig>\n";
+ *
+ *   if nonemptystr !fontpath
+ *   then Printf.bprintf bb "<ui-font size='%d'><![CDATA[%s]]></ui-font>\n"
+ *          uifontsize
+ *          !fontpath
+ *   else
+ *     if uifontsize <> 14
+ *     then Printf.bprintf bb "<ui-font size='%d'/>\n" uifontsize
+ *   ;
+ *
+ *   Buffer.add_string bb "<defaults";
+ *   add_attrs bb true dc dc nan;
+ *   let kb = keymapsbuf true dc dc in
+ *   if Buffer.length kb > 0
+ *   then (
+ *     Buffer.add_string bb ">\n";
+ *     Buffer.add_buffer bb kb;
+ *     Buffer.add_string bb "\n</defaults>\n";
+ *   )
+ *   else Buffer.add_string bb "/>\n";
+ *
+ *   let adddoc path pan anchor c bookmarks time origin =
+ *     if not (bookmarks == [] && c = dc && anchor = emptyanchor)
+ *     then (
+ *       Printf.bprintf bb "<doc path='%s'"
+ *         (Parser.enent path 0 (String.length path));
+ *
+ *       if nonemptystr c.key
+ *       then Printf.bprintf bb "\n    key='%s'" c.key;
+ *
+ *       if nonemptystr origin
+ *       then Printf.bprintf bb "\n    origin='%s'"
+ *              (Parser.enent origin 0 (String.length origin));
+ *
+ *       if anchor <> emptyanchor
+ *       then (
+ *         let n, rely, visy = anchor in
+ *         Printf.bprintf bb "\n    page='%d'" n;
+ *
+ *         if rely > 1e-6
+ *         then Printf.bprintf bb " rely='%f'" rely;
+ *
+ *         if abs_float visy > 1e-6
+ *         then Printf.bprintf bb " visy='%f'" visy;
+ *       );
+ *
+ *       if pan != 0
+ *       then Printf.bprintf bb " pan='%d'" pan;
+ *
+ *       add_attrs bb false dc c time;
+ *       if nonemptystr c.css
+ *       then Printf.bprintf bb ">\n    <css><![CDATA[%s]]></css>" c.css;
+ *       let kb = keymapsbuf false dc c in
+ *
+ *       begin match bookmarks with
+ *       | [] ->
+ *          if Buffer.length kb > 0
+ *          then (
+ *            Buffer.add_string bb ">\n";
+ *            Buffer.add_buffer bb kb;
+ *            Buffer.add_string bb "\n</doc>\n";
+ *          )
+ *          else (
+ *            if nonemptystr c.css
+ *            then Buffer.add_string bb "\n</doc>\n"
+ *            else Buffer.add_string bb "/>\n"
+ *          )
+ *       | _ ->
+ *          Buffer.add_string bb ">\n<bookmarks>\n";
+ *          List.iter (fun (title, _, kind) ->
+ *              begin match kind with
+ *              | Oanchor (page, rely, visy) ->
+ *                 Printf.bprintf bb
+ *                   "<item title='%s' page='%d'"
+ *                   (Parser.enent title 0 (String.length title))
+ *                   page;
+ *                 if rely > 1e-6
+ *                 then Printf.bprintf bb " rely='%f'" rely;
+ *                 if abs_float visy > 1e-6
+ *                 then Printf.bprintf bb " visy='%f'" visy;
+ *
+ *              | Ohistory _ | Onone | Ouri _ | Oremote _
+ *              | Oremotedest _ | Olaunch _ -> error "unexpected link in bookmarks"
+ *              end;
+ *              Buffer.add_string bb "/>\n";
+ *            ) bookmarks;
+ *          Buffer.add_string bb "</bookmarks>";
+ *          if Buffer.length kb > 0
+ *          then (
+ *            Buffer.add_string bb "\n";
+ *            Buffer.add_buffer bb kb;
+ *          );
+ *          Buffer.add_string bb "\n</doc>\n";
+ *       end;
+ *     )
+ *   in
+ *
+ *   let pan, conf =
+ *     match state.mode with
+ *     | Birdseye (c, pan, _, _, _) ->
+ *        let beyecolumns =
+ *          match conf.columns with
+ *          | Cmulti ((c, _, _), _) -> Some c
+ *          | Csingle _ -> None
+ *          | Csplit _ -> None
+ *        and columns =
+ *          match c.columns with
+ *          | Cmulti (c, _) -> Cmulti (c, E.a)
+ *          | Csingle _ -> Csingle E.a
+ *          | Csplit _ -> failwith "quit from bird's eye while split"
+ *        in
+ *        pan, { c with beyecolumns = beyecolumns; columns = columns }
+ *     | Textentry _
+ *     | View
+ *     | LinkNav _ -> x, conf
+ *   in
+ *   let docpath = if nonemptystr state.path then abspath state.path else E.s in
+ *   if nonemptystr docpath
+ *   then (
+ *     adddoc docpath pan (getanchor ())
+ *       (
+ *         let autoscrollstep =
+ *           match state.autoscroll with
+ *           | Some step -> step
+ *           | None -> conf.autoscrollstep
+ *         in
+ *         begin match state.mode with
+ *         | Birdseye beye -> leavebirdseye beye true
+ *         | Textentry _
+ *         | View
+ *         | LinkNav _ -> ()
+ *         end;
+ *         let key = try Digest.file docpath |> Digest.to_hex
+ *                   with _ -> E.s in
+ *         { conf with autoscrollstep; key }
+ *       )
+ *       state.bookmarks
+ *       (now ())
+ *       state.origin
+ *   );
+ *   Hashtbl.iter (fun path (c, bookmarks, x, anchor, origin) ->
+ *       if docpath <> abspath path
+ *       then adddoc path x anchor c bookmarks c.lastvisit origin
+ *     ) h;
+ *   Buffer.add_string bb "</llppconfig>\n";
+ *   true;
+ * ;;
+ *
+ * let save leavebirdseye =
+ *   let relx = float state.x /. float state.winw in
+ *   let w, h, x =
+ *     let cx w = truncate (relx *. float w) in
+ *     List.fold_left
+ *       (fun (w, h, x) ws ->
+ *         match ws with
+ *         | Wsi.Fullscreen -> (conf.cwinw, conf.cwinh, cx conf.cwinw)
+ *         | Wsi.MaxVert -> (w, conf.cwinh, x)
+ *         | Wsi.MaxHorz -> (conf.cwinw, h, cx conf.cwinw)
+ *       )
+ *       (state.winw, state.winh, state.x) state.winstate
+ *   in
+ *   conf.cwinw <- w;
+ *   conf.cwinh <- h;
+ *   let bb = Buffer.create 32768 in
+ *   let save2 (h, dc) = save1 bb leavebirdseye x h dc in
+ *   if load1 save2 && Buffer.length bb > 0
+ *   then
+ *     try
+ *       let tmp = !confpath ^ ".tmp" in
+ *       let oc = open_out_bin tmp in
+ *       Buffer.output_buffer oc bb;
+ *       close_out oc;
+ *       Unix.rename tmp !confpath;
+ *     with exn -> dolog "error saving configuration: %s" @@ exntos exn
+ * ;;
+ *
+ * let gc () =
+ *   let href = ref @@ Hashtbl.create 0 in
+ *   let cref = ref defconf in
+ *   let push (h, dc) =
+ *     let f path v =
+ *       if Sys.file_exists path
+ *       then Some v
+ *       else (dolog "removing entry for '%s'" path; None) in
+ *     Hashtbl.filter_map_inplace f h;
+ *     href := h;
+ *     cref := dc;
+ *     true
+ *   in
+ *   ignore (load1 push);
+ *   let bb = Buffer.create 32768 in
+ *   let save2 (_h, dc) = save1 bb (fun _ _ -> ()) 0 !href dc in
+ *   if load1 save2 && Buffer.length bb > 0
+ *   then (
+ *     try
+ *       let tmp = !confpath ^ ".tmp" in
+ *       let oc = open_out_bin tmp in
+ *       Buffer.output_buffer oc bb;
+ *       close_out oc;
+ *       Unix.rename tmp !confpath;
+ *     with exn -> dolog "error saving configuration: %s" @@ exntos exn
+ *   );
+ * ;; *)
 
 let logcurrently = function
   | Idle -> dolog "Idle"
